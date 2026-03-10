@@ -30,7 +30,6 @@ let bridge: NatsBridge;
 let isProcessing = false;
 let lastSessionId: string | undefined;
 let currentQueryIter: AsyncIterator<unknown> | null = null;
-let abortPending = false;
 let extensionMcpServers: Record<string, { type: string; command?: string; args?: string[]; url?: string; env?: Record<string, string>; headers?: Record<string, string> }> = {};
 const pendingMessages: Array<Record<string, unknown>> = [];
 
@@ -237,12 +236,6 @@ function loadSystemPrompt(includeIdentity = true): string {
 async function handleMessage(data: Record<string, unknown>): Promise<void> {
   const text = data.text as string;
   if (!text) return;
-
-  if (abortPending) {
-    abortPending = false;
-    console.log("[agent] discarding message received after abort");
-    return;
-  }
 
   if (isProcessing) {
     pendingMessages.push(data);
@@ -477,7 +470,6 @@ async function handleControl(
       break;
     case "abort":
       console.log("[agent] aborting current run...");
-      abortPending = true;
       if (currentQueryIter) {
         currentQueryIter.return?.(undefined);
         currentQueryIter = null;
