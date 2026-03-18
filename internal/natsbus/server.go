@@ -47,7 +47,7 @@ func newBus(cfg config.NATSConfig, port int) (*Bus, error) {
 
 	go ns.Start()
 
-	if !ns.ReadyForConnections(5 * time.Second) {
+	if !ns.ReadyForConnections(10 * time.Second) {
 		return nil, fmt.Errorf("nats server not ready")
 	}
 

@@ -9,7 +9,7 @@ run:
 	go run -ldflags "-X main.version=$(VERSION)" ./cmd/praktor gateway
 
 test:
-	go test ./...
+	go test -p 2 ./...
 
 clean:
 	rm -rf bin/ ui/dist/

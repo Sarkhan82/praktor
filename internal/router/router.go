@@ -7,7 +7,9 @@ import (
 	"strings"
 
 	"github.com/mtzanidakis/praktor/internal/config"
+	"github.com/mtzanidakis/praktor/internal/embeddings"
 	"github.com/mtzanidakis/praktor/internal/registry"
+	"github.com/mtzanidakis/praktor/internal/store"
 )
 
 type Orchestrator interface {
@@ -18,17 +20,36 @@ type Router struct {
 	registry     *registry.Registry
 	defaultAgent string
 	orch         Orchestrator
+	embedder     embeddings.Embedder
+	store        *store.Store
+	threshold    float32
 }
 
 func New(reg *registry.Registry, cfg config.RouterConfig) *Router {
+	threshold := float32(1.0)
+	if cfg.VectorThreshold > 0 {
+		threshold = float32(cfg.VectorThreshold)
+	}
 	return &Router{
 		registry:     reg,
 		defaultAgent: cfg.DefaultAgent,
+		threshold:    threshold,
 	}
 }
 
 func (r *Router) SetOrchestrator(orch Orchestrator) {
 	r.orch = orch
+}
+
+// SetEmbedder enables vector-based routing using the given embedder and store.
+func (r *Router) SetEmbedder(e embeddings.Embedder, s *store.Store) {
+	r.embedder = e
+	r.store = s
+}
+
+// SetVectorThreshold updates the distance threshold for vector routing.
+func (r *Router) SetVectorThreshold(t float32) {
+	r.threshold = t
 }
 
 func (r *Router) Route(ctx context.Context, message string) (agentID string, cleanedMessage string, err error) {
@@ -51,7 +72,27 @@ func (r *Router) Route(ctx context.Context, message string) (agentID string, cle
 		// Unknown agent name in prefix — fall through to smart routing
 	}
 
-	// 2. Try smart routing via default agent
+	// 2. Try vector similarity routing (if configured)
+	if r.embedder != nil && r.store != nil {
+		vecs, err := r.embedder.Embed(ctx, []string{message})
+		if err != nil {
+			slog.Debug("vector embed failed, falling through", "error", err)
+		} else if len(vecs) > 0 {
+			results, err := r.store.FindNearestAgent(vecs[0], 1)
+			if err != nil {
+				slog.Debug("vector search failed, falling through", "error", err)
+			} else if len(results) > 0 && results[0].Distance < r.threshold {
+				if _, ok := r.registry.GetDefinition(results[0].AgentID); ok {
+					slog.Debug("vector routing matched",
+						"agent", results[0].AgentID,
+						"distance", results[0].Distance)
+					return results[0].AgentID, message, nil
+				}
+			}
+		}
+	}
+
+	// 3. Try smart routing via default agent
 	if r.orch != nil && r.defaultAgent != "" {
 		descs := r.registry.AgentDescriptions()
 		if len(descs) > 1 {
@@ -69,7 +110,7 @@ func (r *Router) Route(ctx context.Context, message string) (agentID string, cle
 		}
 	}
 
-	// 3. Fall back to default agent
+	// 4. Fall back to default agent
 	if r.defaultAgent == "" {
 		return "", message, fmt.Errorf("no default agent configured")
 	}

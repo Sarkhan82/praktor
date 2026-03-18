@@ -13,6 +13,7 @@ import (
 	"github.com/mtzanidakis/praktor/internal/agent"
 	"github.com/mtzanidakis/praktor/internal/agentmail"
 	"github.com/mtzanidakis/praktor/internal/config"
+	"github.com/mtzanidakis/praktor/internal/embeddings"
 	"github.com/mtzanidakis/praktor/internal/container"
 	"github.com/mtzanidakis/praktor/internal/natsbus"
 	"github.com/mtzanidakis/praktor/internal/registry"
@@ -93,8 +94,24 @@ func runGateway() error {
 	defer bus.Close()
 	slog.Info("nats started", "port", config.NATSPort)
 
-	// Agent registry (replaces groups manager)
+	// Agent registry
 	reg := registry.New(db, cfg.Agents, cfg.Defaults, config.AgentsBasePath)
+
+	// Vector routing — enabled by default if model is present
+	var emb *embeddings.HugotEmbedder
+	if _, err := os.Stat(embeddings.DefaultModelPath); err == nil {
+		emb, err = embeddings.NewHugotEmbedder(embeddings.DefaultModelPath)
+		if err != nil {
+			slog.Error("failed to init embedder, vector routing disabled", "error", err)
+		} else {
+			defer emb.Close()
+			reg.SetEmbedder(emb)
+			slog.Info("vector routing enabled")
+		}
+	} else {
+		slog.Info("vector routing model not found, disabled", "path", embeddings.DefaultModelPath)
+	}
+
 	if err := reg.Sync(); err != nil {
 		return fmt.Errorf("sync agent registry: %w", err)
 	}
@@ -118,6 +135,9 @@ func runGateway() error {
 	// Message router
 	rtr := router.New(reg, cfg.Router)
 	rtr.SetOrchestrator(orch)
+	if emb != nil {
+		rtr.SetEmbedder(emb, db)
+	}
 
 	// Idle reaper
 	go orch.StartIdleReaper(ctx)
@@ -300,10 +320,13 @@ func reloadConfig(
 		slog.Info("defaults updated")
 	}
 
-	// Update router default agent
+	// Update router default agent and vector threshold
 	if diff.RouterChanged {
 		rtr.SetDefaultAgent(diff.NewDefaultAgent)
-		slog.Info("router default agent updated", "agent", diff.NewDefaultAgent)
+		if newCfg.Router.VectorThreshold > 0 {
+			rtr.SetVectorThreshold(float32(newCfg.Router.VectorThreshold))
+		}
+		slog.Info("router updated", "default_agent", diff.NewDefaultAgent, "vector_threshold", newCfg.Router.VectorThreshold)
 	}
 
 	// Update scheduler

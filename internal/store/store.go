@@ -10,6 +10,7 @@ import (
 
 	"github.com/mtzanidakis/praktor/internal/extensions"
 	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite/vec"
 )
 
 type Store struct {
@@ -218,6 +219,15 @@ func (s *Store) migrate() error {
 	// One-time data migration from JSON blob to normalized tables
 	if err := s.migrateExtensionsToTables(); err != nil {
 		return fmt.Errorf("migrate extensions to tables: %w", err)
+	}
+
+	// sqlite-vec: agent description embeddings for vector routing
+	var vecTableExists int
+	s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='agent_embeddings'`).Scan(&vecTableExists)
+	if vecTableExists == 0 {
+		if _, err := s.db.Exec(`CREATE VIRTUAL TABLE agent_embeddings USING vec0(agent_id TEXT NOT NULL, desc_hash TEXT NOT NULL, embedding float[384])`); err != nil {
+			return fmt.Errorf("create agent_embeddings vec0 table: %w", err)
+		}
 	}
 
 	return nil

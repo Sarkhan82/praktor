@@ -70,7 +70,8 @@ type FileMount struct {
 }
 
 type RouterConfig struct {
-	DefaultAgent string `yaml:"default_agent"`
+	DefaultAgent    string  `yaml:"default_agent"`
+	VectorThreshold float64 `yaml:"vector_threshold"`
 }
 
 type NATSConfig struct {
