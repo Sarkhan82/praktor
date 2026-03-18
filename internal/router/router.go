@@ -26,7 +26,7 @@ type Router struct {
 }
 
 func New(reg *registry.Registry, cfg config.RouterConfig) *Router {
-	threshold := float32(1.0)
+	threshold := float32(1.3)
 	if cfg.VectorThreshold > 0 {
 		threshold = float32(cfg.VectorThreshold)
 	}
@@ -78,15 +78,23 @@ func (r *Router) Route(ctx context.Context, message string) (agentID string, cle
 		if err != nil {
 			slog.Debug("vector embed failed, falling through", "error", err)
 		} else if len(vecs) > 0 {
-			results, err := r.store.FindNearestAgent(vecs[0], 1)
+			results, err := r.store.FindNearestAgent(vecs[0], 2)
 			if err != nil {
 				slog.Debug("vector search failed, falling through", "error", err)
-			} else if len(results) > 0 && results[0].Distance < r.threshold {
-				if _, ok := r.registry.GetDefinition(results[0].AgentID); ok {
-					slog.Debug("vector routing matched",
-						"agent", results[0].AgentID,
-						"distance", results[0].Distance)
-					return results[0].AgentID, message, nil
+			} else if len(results) > 0 {
+				if results[0].Distance < r.threshold {
+					if _, ok := r.registry.GetDefinition(results[0].AgentID); ok {
+						slog.Info("vector routing matched",
+							"agent", results[0].AgentID,
+							"distance", fmt.Sprintf("%.3f", results[0].Distance),
+							"threshold", fmt.Sprintf("%.3f", r.threshold))
+						return results[0].AgentID, message, nil
+					}
+				} else {
+					slog.Info("vector routing no confident match",
+						"best", results[0].AgentID,
+						"distance", fmt.Sprintf("%.3f", results[0].Distance),
+						"threshold", fmt.Sprintf("%.3f", r.threshold))
 				}
 			}
 		}

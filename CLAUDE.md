@@ -125,7 +125,7 @@ Agents are defined in the `agents` map in YAML config. Each agent has:
 
 The `router.default_agent` must reference an existing agent.
 
-**Vector Routing:** Enabled by default. The all-MiniLM-L6-v2 ONNX model (384 dims) is baked into the Docker image at `/opt/models/sentence-transformers_all-MiniLM-L6-v2` via `cmd/dlmodel`. Uses Hugot pure-Go backend (no CGO). Agent description embeddings are computed on startup and on config reload. Set `router.vector_threshold` (default: 1.0, L2 distance) to tune routing confidence — lower values require closer semantic match.
+**Vector Routing:** Enabled by default. The all-MiniLM-L6-v2 ONNX model (384 dims) is baked into the Docker image at `/opt/models/sentence-transformers_all-MiniLM-L6-v2` via `cmd/dlmodel`. Uses Hugot pure-Go backend (no CGO). Agent description embeddings are computed on startup and on config reload. Set `router.vector_threshold` (default: 1.3, L2 distance) to tune routing confidence — lower values require closer semantic match.
 
 ### Agent Extensions
 
