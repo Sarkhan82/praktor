@@ -283,6 +283,14 @@ func (r *Registry) SetEmbedder(e embeddings.Embedder) {
 	r.embedder = e
 }
 
+// SyncEmbeddings triggers a re-sync of agent embeddings. Call this after
+// updating agent profile data (e.g. AGENT.md) so vector routing stays current.
+func (r *Registry) SyncEmbeddings() {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	r.syncEmbeddings()
+}
+
 // syncEmbeddings computes and stores embeddings for agent descriptions
 // that have changed since last sync. Must be called with agents already set.
 func (r *Registry) syncEmbeddings() {
@@ -305,12 +313,17 @@ func (r *Registry) syncEmbeddings() {
 		if def.Description == "" {
 			continue
 		}
-		descHash := fmt.Sprintf("%x", sha256.Sum256([]byte(def.Description)))
+		// Build embedding text from description + AGENT.md profile
+		embText := name + ": " + def.Description
+		if profile, err := r.GetAgentMD(name); err == nil && profile != "" {
+			embText += "\n" + profile
+		}
+		embHash := fmt.Sprintf("%x", sha256.Sum256([]byte(embText)))
 		existing, _ := r.store.GetAgentEmbeddingHash(name)
-		if existing == descHash {
+		if existing == embHash {
 			continue
 		}
-		pending = append(pending, needsEmbed{name: name, desc: def.Description, hash: descHash})
+		pending = append(pending, needsEmbed{name: name, desc: embText, hash: embHash})
 	}
 
 	if len(pending) == 0 {
