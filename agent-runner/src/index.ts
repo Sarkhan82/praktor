@@ -23,6 +23,7 @@ const NATS_URL = process.env.NATS_URL || "nats://localhost:4222";
 const AGENT_ID = process.env.AGENT_ID || process.env.GROUP_ID || "default";
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || undefined;
 const ALLOWED_TOOLS_ENV = process.env.ALLOWED_TOOLS || "";
+const MAX_TURNS = parseInt(process.env.MAX_TURNS || "200", 10);
 const SWARM_CHAT_TOPIC = process.env.SWARM_CHAT_TOPIC || "";
 const SWARM_ROLE = process.env.SWARM_ROLE || "";
 
@@ -350,6 +351,7 @@ function buildQueryOptions(prompt: string, sessionId?: string) {
       systemPrompt: systemPrompt || undefined,
       ...(sessionId ? { resume: sessionId } : {}),
       allowedTools,
+      maxTurns: MAX_TURNS,
       mcpServers: {
         "praktor-tasks": {
           type: "stdio",
