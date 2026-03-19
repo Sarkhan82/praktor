@@ -37,6 +37,7 @@ func NewHugotEmbedder(modelPath string) (*HugotEmbedder, error) {
 	config := hugot.FeatureExtractionConfig{
 		ModelPath: modelPath,
 		Name:      "praktor-routing",
+		Options:   []hugot.FeatureExtractionOption{pipelines.WithNormalization()},
 	}
 	pipeline, err := hugot.NewPipeline(session, config)
 	if err != nil {
