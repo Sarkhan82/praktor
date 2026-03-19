@@ -327,20 +327,7 @@ function loadSystemPrompt(includeIdentity = true): string {
 function buildQueryOptions(prompt: string, sessionId?: string) {
   const systemPrompt = loadSystemPrompt();
   const cwd = "/workspace/agent";
-  const configuredTools = parseAllowedTools(ALLOWED_TOOLS_ENV);
-  const allowedTools = configuredTools || [
-    "Bash",
-    "Read",
-    "Write",
-    "Edit",
-    "Glob",
-    "Grep",
-    "WebSearch",
-    "WebFetch",
-    "Task",
-    "TaskOutput",
-    "mcp__praktor-*",
-  ];
+  const tools = parseAllowedTools(ALLOWED_TOOLS_ENV);
 
   return {
     prompt,
@@ -350,7 +337,7 @@ function buildQueryOptions(prompt: string, sessionId?: string) {
       pathToClaudeCodeExecutable: "/usr/local/bin/claude",
       systemPrompt: systemPrompt || undefined,
       ...(sessionId ? { resume: sessionId } : {}),
-      allowedTools,
+      ...(tools ? { tools } : {}),
       maxTurns: MAX_TURNS,
       mcpServers: {
         "praktor-tasks": {
@@ -609,7 +596,7 @@ async function handleRoute(
         cwd,
         pathToClaudeCodeExecutable: "/usr/local/bin/claude",
         systemPrompt: systemPrompt || undefined,
-        allowedTools: [],
+        tools: [],
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
       },

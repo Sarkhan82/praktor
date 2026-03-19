@@ -210,6 +210,7 @@ func (o *Orchestrator) executeMessage(ctx context.Context, agentID string, msg Q
 		if hasDef {
 			opts.Env = cloneMap(def.Env)
 			opts.AllowedTools = def.AllowedTools
+
 			opts.NixEnabled = def.NixEnabled
 		}
 

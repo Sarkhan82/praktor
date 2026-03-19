@@ -163,7 +163,6 @@ func (m *Manager) StartAgent(ctx context.Context, opts AgentOpts) (*ContainerInf
 	if len(opts.AllowedTools) > 0 {
 		env = append(env, fmt.Sprintf("ALLOWED_TOOLS=%s", strings.Join(opts.AllowedTools, ",")))
 	}
-
 	mounts := buildMounts(opts)
 
 	image := opts.Image
