@@ -98,6 +98,9 @@ func Diff(old, new *Config) ConfigDiff {
 	if old.AgentMail.APIKey != new.AgentMail.APIKey {
 		d.NonReloadable = append(d.NonReloadable, "agentmail.api_key")
 	}
+	if old.Speech.APIKey != new.Speech.APIKey {
+		d.NonReloadable = append(d.NonReloadable, "speech.api_key")
+	}
 
 	return d
 }

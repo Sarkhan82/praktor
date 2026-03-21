@@ -17,6 +17,7 @@ import (
 	"github.com/mtzanidakis/praktor/internal/natsbus"
 	"github.com/mtzanidakis/praktor/internal/registry"
 	"github.com/mtzanidakis/praktor/internal/router"
+	"github.com/mtzanidakis/praktor/internal/speech"
 	"github.com/mtzanidakis/praktor/internal/store"
 	"github.com/mtzanidakis/praktor/internal/swarm"
 	"github.com/mymmrac/telego"
@@ -48,9 +49,17 @@ type Bot struct {
 	// Track swarm → chat_id for result delivery
 	swarmChatMu sync.RWMutex
 	swarmChat   map[string]int64 // swarmID → chatID
+
+	// Speech-to-text / text-to-speech
+	speech    *speech.Client
+	speechCfg config.SpeechConfig
+
+	// Track which chats had voice input (for TTS respond-in-kind)
+	voiceChatMu sync.RWMutex
+	voiceChat   map[int64]bool // chatID → was voice
 }
 
-func NewBot(cfg config.TelegramConfig, orch *agent.Orchestrator, rtr *router.Router, sc *swarm.Coordinator, reg *registry.Registry, bus *natsbus.Bus, s *store.Store) (*Bot, error) {
+func NewBot(cfg config.TelegramConfig, orch *agent.Orchestrator, rtr *router.Router, sc *swarm.Coordinator, reg *registry.Registry, bus *natsbus.Bus, s *store.Store, speechClient *speech.Client, speechCfg config.SpeechConfig) (*Bot, error) {
 	bot, err := telego.NewBot(cfg.Token)
 	if err != nil {
 		return nil, fmt.Errorf("create telegram bot: %w", err)
@@ -68,6 +77,9 @@ func NewBot(cfg config.TelegramConfig, orch *agent.Orchestrator, rtr *router.Rou
 		chatAgent:  make(map[int64]string),
 		msgAgent:   make(map[int]string),
 		swarmChat:  make(map[string]int64),
+		speech:     speechClient,
+		speechCfg:  speechCfg,
+		voiceChat:  make(map[int64]bool),
 	}
 
 	// Register bot commands with Telegram so they appear in the menu
@@ -110,6 +122,41 @@ func NewBot(cfg config.TelegramConfig, orch *agent.Orchestrator, rtr *router.Rou
 		if err != nil {
 			return
 		}
+
+		// Check if we should respond with voice (TTS)
+		shouldTTS := false
+		if b.speech != nil && b.speechCfg.TTSEnabled {
+			switch b.speechCfg.TTSMode {
+			case "always":
+				shouldTTS = true
+			case "voice":
+				b.voiceChatMu.RLock()
+				shouldTTS = b.voiceChat[chatID]
+				b.voiceChatMu.RUnlock()
+			}
+		}
+
+		if shouldTTS && len(content) <= 4096 {
+			if audio, err := b.speech.Synthesize(context.Background(), content, b.speechCfg.TTSVoice); err == nil {
+				// Clear voice tracking for this chat
+				b.voiceChatMu.Lock()
+				delete(b.voiceChat, chatID)
+				b.voiceChatMu.Unlock()
+
+				if err := b.SendVoice(context.Background(), chatID, audio); err != nil {
+					slog.Error("failed to send voice response, falling back to text", "chat", chatID, "error", err)
+				} else {
+					return
+				}
+			} else {
+				slog.Warn("tts synthesis failed, falling back to text", "error", err)
+			}
+		}
+
+		// Clear voice tracking even if we didn't TTS (response too long, etc.)
+		b.voiceChatMu.Lock()
+		delete(b.voiceChat, chatID)
+		b.voiceChatMu.Unlock()
 
 		// Prefix with agent name for attribution (skip for default agent)
 		attributed := content
@@ -320,28 +367,51 @@ func (b *Bot) handleMessage(ctx context.Context, msg telego.Message) {
 			return
 		}
 
-		// Resolve agent workspace and image
-		ag, err := b.registry.Get(agentID)
-		if err != nil || ag == nil {
-			slog.Error("agent not found for file upload", "agent", agentID, "error", err)
-			_ = b.SendMessage(ctx, chatID, "Sorry, I couldn't find the agent to deliver the file.")
-			return
+		// Attempt voice transcription for voice messages and video notes
+		isVoice := msg.Voice != nil
+		isVideoNote := msg.VideoNote != nil
+		skipFileSave := false
+
+		if (isVoice || isVideoNote) && b.speech != nil {
+			if transcribed := b.transcribeVoice(ctx, data, attachment.Name); transcribed != "" {
+				if isVoice {
+					cleanedMessage = fmt.Sprintf("[Voice message] %s", transcribed)
+					skipFileSave = true
+				} else {
+					// Video note: prepend transcription, still save the video
+					cleanedMessage = fmt.Sprintf("[Voice message] %s\n\n%s", transcribed, cleanedMessage)
+				}
+				// Track voice input for TTS respond-in-kind
+				b.voiceChatMu.Lock()
+				b.voiceChat[chatID] = true
+				b.voiceChatMu.Unlock()
+			}
 		}
 
-		image := b.registry.ResolveImage(agentID)
-		volumePath := fmt.Sprintf("uploads/%d_%s", time.Now().Unix(), attachment.Name)
-		containerPath := "/workspace/agent/" + volumePath
+		if !skipFileSave {
+			// Resolve agent workspace and image
+			ag, err := b.registry.Get(agentID)
+			if err != nil || ag == nil {
+				slog.Error("agent not found for file upload", "agent", agentID, "error", err)
+				_ = b.SendMessage(ctx, chatID, "Sorry, I couldn't find the agent to deliver the file.")
+				return
+			}
 
-		if err := b.orch.WriteVolumeBytes(ctx, ag.Workspace, volumePath, data, image); err != nil {
-			slog.Error("file write to volume failed", "path", volumePath, "error", err)
-			_ = b.SendMessage(ctx, chatID, "Sorry, I couldn't save the file to the agent workspace.")
-			return
+			image := b.registry.ResolveImage(agentID)
+			volumePath := fmt.Sprintf("uploads/%d_%s", time.Now().Unix(), attachment.Name)
+			containerPath := "/workspace/agent/" + volumePath
+
+			if err := b.orch.WriteVolumeBytes(ctx, ag.Workspace, volumePath, data, image); err != nil {
+				slog.Error("file write to volume failed", "path", volumePath, "error", err)
+				_ = b.SendMessage(ctx, chatID, "Sorry, I couldn't save the file to the agent workspace.")
+				return
+			}
+
+			slog.Info("file received and saved", "agent", agentID, "name", attachment.Name, "size", len(data), "path", containerPath)
+
+			cleanedMessage = fmt.Sprintf("%s\n\n[File received: %s (%s, %d bytes) saved to %s]",
+				cleanedMessage, attachment.Name, attachment.MimeType, len(data), containerPath)
 		}
-
-		slog.Info("file received and saved", "agent", agentID, "name", attachment.Name, "size", len(data), "path", containerPath)
-
-		cleanedMessage = fmt.Sprintf("%s\n\n[File received: %s (%s, %d bytes) saved to %s]",
-			cleanedMessage, attachment.Name, attachment.MimeType, len(data), containerPath)
 	}
 
 	meta := map[string]string{
@@ -533,6 +603,35 @@ func (b *Bot) SendDocument(ctx context.Context, chatID int64, data []byte, name,
 		return fmt.Errorf("send document: %w", err)
 	}
 	return nil
+}
+
+// SendVoice sends an OGG/Opus voice message to a Telegram chat.
+func (b *Bot) SendVoice(ctx context.Context, chatID int64, data []byte) error {
+	params := &telego.SendVoiceParams{
+		ChatID: tu.ID(chatID),
+		Voice:  telego.InputFile{File: tu.NameReader(bytes.NewReader(data), "voice.ogg")},
+	}
+	_, err := b.bot.SendVoice(ctx, params)
+	if err != nil {
+		return fmt.Errorf("send voice: %w", err)
+	}
+	return nil
+}
+
+// transcribeVoice attempts to transcribe audio bytes to text.
+// Returns the transcribed text or empty string on failure.
+func (b *Bot) transcribeVoice(ctx context.Context, data []byte, filename string) string {
+	text, err := b.speech.Transcribe(ctx, data, filename)
+	if err != nil {
+		slog.Warn("voice transcription failed, falling back to file attachment", "error", err)
+		return ""
+	}
+	if text == "" {
+		slog.Warn("voice transcription returned empty text")
+		return ""
+	}
+	slog.Info("voice transcribed", "length", len(text))
+	return text
 }
 
 func (b *Bot) sendChatAction(ctx context.Context, chatID int64, action string) error {

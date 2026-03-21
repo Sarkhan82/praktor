@@ -18,6 +18,7 @@ import (
 	"github.com/mtzanidakis/praktor/internal/registry"
 	"github.com/mtzanidakis/praktor/internal/router"
 	"github.com/mtzanidakis/praktor/internal/scheduler"
+	"github.com/mtzanidakis/praktor/internal/speech"
 	"github.com/mtzanidakis/praktor/internal/store"
 	"github.com/mtzanidakis/praktor/internal/swarm"
 	"github.com/mtzanidakis/praktor/internal/telegram"
@@ -133,9 +134,16 @@ func runGateway() error {
 	sched := scheduler.New(db, orch, bus, cfg.Scheduler, cfg.Telegram.MainChatID)
 	go sched.Start(ctx)
 
+	// Speech-to-text / text-to-speech (OpenAI API)
+	var speechClient *speech.Client
+	if cfg.Speech.APIKey != "" {
+		speechClient = speech.NewClient(cfg.Speech.APIKey)
+		slog.Info("speech enabled (STT + TTS)", "tts_enabled", cfg.Speech.TTSEnabled)
+	}
+
 	// Telegram bot
 	if cfg.Telegram.Token != "" {
-		bot, err := telegram.NewBot(cfg.Telegram, orch, rtr, swarmCoord, reg, bus, db)
+		bot, err := telegram.NewBot(cfg.Telegram, orch, rtr, swarmCoord, reg, bus, db, speechClient, cfg.Speech)
 		if err != nil {
 			return fmt.Errorf("init telegram bot: %w", err)
 		}

@@ -19,10 +19,18 @@ type Config struct {
 	Scheduler  SchedulerConfig               `yaml:"scheduler"`
 	Vault      VaultConfig                   `yaml:"vault"`
 	AgentMail  AgentMailConfig               `yaml:"agentmail"`
+	Speech     SpeechConfig                 `yaml:"speech"`
 }
 
 type AgentMailConfig struct {
 	APIKey string `yaml:"api_key"`
+}
+
+type SpeechConfig struct {
+	APIKey     string `yaml:"api_key"`
+	TTSEnabled bool   `yaml:"tts_enabled"`
+	TTSMode    string `yaml:"tts_mode"`
+	TTSVoice   string `yaml:"tts_voice"`
 }
 
 type VaultConfig struct {
@@ -105,6 +113,10 @@ func defaults() Config {
 		},
 		Scheduler: SchedulerConfig{
 			PollInterval: 30 * time.Second,
+		},
+		Speech: SpeechConfig{
+			TTSMode:  "voice",
+			TTSVoice: "alloy",
 		},
 	}
 }
@@ -196,5 +208,8 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("AGENTMAIL_API_KEY"); v != "" {
 		cfg.AgentMail.APIKey = v
+	}
+	if v := os.Getenv("OPENAI_API_KEY"); v != "" {
+		cfg.Speech.APIKey = v
 	}
 }

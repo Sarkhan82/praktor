@@ -28,6 +28,7 @@ Personal AI agent assistant. A single Go binary that receives messages from Tele
 - **Hot config reload** — Edit `praktor.yaml` and changes apply automatically, no restart needed
 - **Nix package manager** — Agents can install packages on demand (Python, ffmpeg, LaTeX, etc.) via MCP tools or the `/nix` Telegram command
 - **Agent extensions** — Per-agent MCP servers, plugins, and skills, managed via Mission Control
+- **Voice messages** — Send voice messages in any language; they're transcribed via OpenAI Whisper and delivered as text. Optional TTS replies voice messages back using OpenAI TTS
 - **Agent swarms** — Graph-based multi-agent orchestration with fan-out, pipeline, and collaborative patterns
 - **Backup & restore** — Back up and restore all Docker volumes as zstd-compressed tarballs via CLI
 
@@ -36,6 +37,7 @@ Personal AI agent assistant. A single Go binary that receives messages from Tele
 - Docker and Docker Compose
 - A Telegram bot token ([create one with @BotFather](https://t.me/BotFather))
 - A Claude authentication method: [Anthropic API key](https://console.anthropic.com/) or Claude Code OAuth token (`claude setup-token`)
+- (Optional) An [OpenAI API key](https://platform.openai.com/api-keys) for voice message transcription and text-to-speech
 
 > **Note on OAuth tokens:** Using Claude Code OAuth tokens with third-party applications must comply with Anthropic's [authentication and credential use policy](https://code.claude.com/docs/en/legal-and-compliance#authentication-and-credential-use). Review the policy before using this method. OAuth token support is deprecated and will be removed in a future version.
 
@@ -130,7 +132,7 @@ docker compose up -d
 
 See the **[Wiki](https://github.com/mtzanidakis/praktor/wiki)** for detailed documentation on all features:
 
-[Hot Config Reload](https://github.com/mtzanidakis/praktor/wiki/Hot-Config-Reload) · [Vault](https://github.com/mtzanidakis/praktor/wiki/Vault) · [Browser Automation](https://github.com/mtzanidakis/praktor/wiki/Browser-Automation) · [AgentMail](https://github.com/mtzanidakis/praktor/wiki/AgentMail) · [Agent Extensions](https://github.com/mtzanidakis/praktor/wiki/Agent-Extensions) · [Agent Swarms](https://github.com/mtzanidakis/praktor/wiki/Agent-Swarms) · [Nix Package Manager](https://github.com/mtzanidakis/praktor/wiki/Nix-Package-Manager) · [Backup & Restore](https://github.com/mtzanidakis/praktor/wiki/Backup-and-Restore) · [Production Deployment](https://github.com/mtzanidakis/praktor/wiki/Production-Deployment)
+[Hot Config Reload](https://github.com/mtzanidakis/praktor/wiki/Hot-Config-Reload) · [Vault](https://github.com/mtzanidakis/praktor/wiki/Vault) · [Voice Messages](https://github.com/mtzanidakis/praktor/wiki/Voice-Messages) · [Browser Automation](https://github.com/mtzanidakis/praktor/wiki/Browser-Automation) · [AgentMail](https://github.com/mtzanidakis/praktor/wiki/AgentMail) · [Agent Extensions](https://github.com/mtzanidakis/praktor/wiki/Agent-Extensions) · [Agent Swarms](https://github.com/mtzanidakis/praktor/wiki/Agent-Swarms) · [Nix Package Manager](https://github.com/mtzanidakis/praktor/wiki/Nix-Package-Manager) · [Backup & Restore](https://github.com/mtzanidakis/praktor/wiki/Backup-and-Restore) · [Production Deployment](https://github.com/mtzanidakis/praktor/wiki/Production-Deployment)
 
 ## Getting Help
 

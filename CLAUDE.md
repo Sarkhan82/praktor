@@ -36,6 +36,7 @@ internal/
   container/                     # Docker container lifecycle, image building, volume mounts
   agent/                         # Message orchestrator, per-agent queue, session tracking
   agentmail/                     # AgentMail WebSocket client for real-time email events
+  speech/                        # OpenAI Speech API client (Whisper STT + TTS)
   registry/                      # Agent registry - syncs YAML config to DB, resolves agent config
   router/                        # Message router - @prefix parsing, smart routing via default agent
   telegram/                      # Telegram bot (telego), long-polling, message chunking
@@ -102,6 +103,7 @@ Loaded from YAML (default: `config/praktor.yaml`, override with `PRAKTOR_CONFIG`
 | `PRAKTOR_AGENT_MODEL` | `defaults.model` | Override default Claude model |
 | `PRAKTOR_VAULT_PASSPHRASE` | `vault.passphrase` | Encryption passphrase for secrets vault |
 | `AGENTMAIL_API_KEY` | `agentmail.api_key` | AgentMail API key for email capabilities (optional) |
+| `OPENAI_API_KEY` | `speech.api_key` | OpenAI API key for voice transcription (STT) and synthesis (TTS) |
 
 Hardcoded paths (not configurable): `data/praktor.db` (SQLite), `data/agents` (agent workspaces).
 
@@ -151,7 +153,7 @@ The gateway watches the config file for changes (mtime polled every 3s, SHA-256 
 
 **Reloadable:** Agent definitions (all fields), defaults (model, image, max_running, idle_timeout), router.default_agent, scheduler poll_interval, telegram main_chat_id.
 
-**Not reloadable** (warning logged): telegram.token, web.port, nats.data_dir, vault.passphrase, agentmail.api_key.
+**Not reloadable** (warning logged): telegram.token, web.port, nats.data_dir, vault.passphrase, agentmail.api_key, speech.api_key.
 
 Running agents whose config changed are stopped and lazily restarted on the next message. Added agents become routable immediately. Removed agents are stopped.
 
@@ -318,6 +320,8 @@ All agent containers include [agent-browser](https://github.com/vercel-labs/agen
 - Nix package manager - Agents with `nix_enabled: true` can install packages on demand via MCP tools (nix_search, nix_add, nix_list_installed, nix_remove, nix_upgrade). When nix-daemon is detected, the system prompt instructs agents to auto-install missing tools. The `/nix` Telegram command provides direct user control over agent packages.
 - File sending - Agents can send files (screenshots, PDFs, etc.) to Telegram via the `file_send` MCP tool. Images are sent as photos, other files as documents. Max 12MB per file.
 - File receiving - Files sent to the bot in Telegram (documents, photos, audio, video, voice, video notes, animations) are downloaded and saved to the agent's workspace at `/workspace/agent/uploads/{timestamp}_{filename}`. The agent receives the file path in the message. Supports Telegram's 20MB download limit.
+- Voice transcription (STT) - Voice messages and video notes are automatically transcribed to text via OpenAI Whisper API. Agents receive `[Voice message] <transcribed text>` instead of raw audio files. Requires `OPENAI_API_KEY`. Falls back to file attachment on transcription failure.
+- Voice responses (TTS) - When `speech.tts_enabled` is true, agent responses can be sent back as Telegram voice messages via OpenAI TTS API. `tts_mode`: `"voice"` (respond with voice only when user sends voice), `"always"` (all responses), `"never"` (disabled). Configurable voice (alloy, echo, fable, onyx, nova, shimmer).
 - Browser automation - [agent-browser](https://github.com/vercel-labs/agent-browser) pre-installed with system Chromium, skill auto-loaded into system prompt. Browser session persists across messages, shuts down with container.
 - Container isolation - Agents sandboxed in Docker containers with NATS communication
 - Agent swarms - Graph-based orchestration: fan-out (parallel), pipeline (sequential with context passing), and collaborative (real-time chat) execution patterns. Visual graph editor in Mission Control, `@swarm` Telegram integration
