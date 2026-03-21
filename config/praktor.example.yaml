@@ -47,5 +47,11 @@ vault:
 agentmail:
   api_key: "${AGENTMAIL_API_KEY}"    # AgentMail API key (optional)
 
+speech:
+  api_key: "${OPENAI_API_KEY}"          # OpenAI API key for STT/TTS (optional, disabled if empty)
+  tts_enabled: false                    # Enable text-to-speech voice responses
+  tts_mode: "voice"                     # "voice" = respond with voice only when user sends voice, "always" = all responses, "never" = disabled
+  tts_voice: "alloy"                    # OpenAI TTS voice (alloy, echo, fable, onyx, nova, shimmer)
+
 scheduler:
   poll_interval: 30s
