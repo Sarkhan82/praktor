@@ -539,11 +539,12 @@ func (b *Bot) sendMessage(ctx context.Context, chatID int64, text string) ([]int
 	var ids []int
 	for _, chunk := range chunks {
 		msg := tu.Message(tu.ID(chatID), chunk)
-		msg.ParseMode = telego.ModeMarkdown
+		msg.ParseMode = telego.ModeMarkdownV2
 		sent, err := b.bot.SendMessage(ctx, msg)
 		if err != nil {
 			// Markdown parsing can fail on unescaped characters;
 			// retry as plain text so the message still gets delivered.
+			slog.Warn("MarkdownV2 parse failed, retrying as plain text", "error", err)
 			msg.ParseMode = ""
 			sent, err = b.bot.SendMessage(ctx, msg)
 		}

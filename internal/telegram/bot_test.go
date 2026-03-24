@@ -50,13 +50,41 @@ func TestChunkMessage(t *testing.T) {
 	}
 }
 
+func TestEscapeMarkdownV2(t *testing.T) {
+	tests := []struct {
+		name     string
+		in, want string
+	}{
+		{"plain text", "hello world", "hello world"},
+		{"dots", "file.txt", "file\\.txt"},
+		{"parens", "foo(bar)", "foo\\(bar\\)"},
+		{"exclamation", "done!", "done\\!"},
+		{"mixed special", "a.b(c)d!", "a\\.b\\(c\\)d\\!"},
+		{"hash", "#tag", "\\#tag"},
+		{"pipe", "a|b", "a\\|b"},
+		{"brackets", "[test]", "\\[test\\]"},
+		{"tilde", "~strike~", "\\~strike\\~"},
+		{"plus minus equals", "a+b-c=d", "a\\+b\\-c\\=d"},
+		{"braces", "{key}", "\\{key\\}"},
+		{"backslash passthrough", `a\b`, `a\b`}, // \ is the escape char itself, not escaped
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := escapeMarkdownV2(tt.in)
+			if got != tt.want {
+				t.Errorf("escapeMarkdownV2(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestToTelegramMarkdown(t *testing.T) {
 	tests := []struct {
 		name     string
 		in, want string
 	}{
 		{"bold", "**bold**", "*bold*"},
-		{"bold inline", "hello **world**!", "hello *world*!"},
+		{"bold inline", "hello **world**!", "hello *world*\\!"},
 		{"multiple bold", "**a** and **b**", "*a* and *b*"},
 		{"no bold", "no bold here", "no bold here"},
 		{"already single", "*already single*", "*already single*"},
@@ -74,6 +102,21 @@ func TestToTelegramMarkdown(t *testing.T) {
 		{"image no alt", "![](https://example.com/img.png)", "[](https://example.com/img.png)"},
 		{"code block protected", "```\n## header\n- bullet\n**bold**\n---\n```", "```\n## header\n- bullet\n**bold**\n---\n```"},
 		{"mixed with code block", "## Title\n```\n## not a header\n```\n- bullet", "*Title*\n```\n## not a header\n```\n• bullet"},
+		// MarkdownV2-specific
+		{"special chars escaped", "file.txt (copy)", "file\\.txt \\(copy\\)"},
+		{"link preserved", "[click here](https://example.com)", "[click here](https://example.com)"},
+		{"link with special text", "[file.txt](https://example.com/a.txt)", "[file\\.txt](https://example.com/a.txt)"},
+		{"inline code preserved", "run `ls -la` now", "run `ls -la` now"},
+		{"bold with dots", "**file.txt**", "*file\\.txt*"},
+		{"bullet with special", "- item (a) and b.c", "• item \\(a\\) and b\\.c"},
+		{"exclamation in text", "done!", "done\\!"},
+		{"single star bold", "*Total: 5 files*", "*Total: 5 files*"},
+		{"single star bold with dots", "*file.txt*", "*file\\.txt*"},
+		{"pre-escaped underscore", `photo\_2024.jpg`, `photo\_2024\.jpg`},
+		{"pre-escaped tilde", `data\~backup.csv`, `data\~backup\.csv`},
+		{"pre-escaped dot", `file\.txt`, `file\.txt`},
+		{"italic preserved", "_secretary:_ hello", "_secretary:_ hello"},
+		{"italic with dots", "_agent:_ file.txt done!", "_agent:_ file\\.txt done\\!"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -266,4 +309,3 @@ func TestExtractAttachment(t *testing.T) {
 		t.Errorf("expected largest photo (FileID=large), got %q", got.FileID)
 	}
 }
-
