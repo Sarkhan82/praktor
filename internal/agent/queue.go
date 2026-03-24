@@ -66,3 +66,10 @@ func (q *AgentQueue) Len() int {
 	defer q.mu.Unlock()
 	return len(q.pending)
 }
+
+// Busy reports whether the queue is actively processing or has pending messages.
+func (q *AgentQueue) Busy() bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.locked || len(q.pending) > 0
+}

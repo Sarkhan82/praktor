@@ -40,7 +40,8 @@ type Orchestrator struct {
 	sessions   *SessionTracker
 	queues      map[string]*AgentQueue
 	lastMeta    map[string]map[string]string // agentID → last message meta (fallback for IPC)
-	pendingMeta map[string]map[string]string // msgID → message meta
+	pendingMeta   map[string]map[string]string // msgID → message meta
+	pendingMsgID  map[string]string            // msgID → agentID (track in-flight messages)
 	mu         sync.RWMutex
 	listeners     []OutputListener
 	fileListeners []FileListener
@@ -68,7 +69,8 @@ func NewOrchestrator(bus *natsbus.Bus, ctr *container.Manager, s *store.Store, r
 		sessions:   NewSessionTracker(),
 		queues:      make(map[string]*AgentQueue),
 		lastMeta:    make(map[string]map[string]string),
-		pendingMeta: make(map[string]map[string]string),
+		pendingMeta:  make(map[string]map[string]string),
+		pendingMsgID: make(map[string]string),
 	}
 
 	client, err := natsbus.NewClient(bus)
@@ -275,6 +277,7 @@ func (o *Orchestrator) executeMessage(ctx context.Context, agentID string, msg Q
 	o.mu.Lock()
 	o.lastMeta[agentID] = msg.Meta
 	o.pendingMeta[msgID] = msg.Meta
+	o.pendingMsgID[msgID] = agentID
 	o.mu.Unlock()
 
 	data, _ := json.Marshal(payload)
@@ -434,8 +437,22 @@ func (o *Orchestrator) popPendingMeta(msgID string) map[string]string {
 	meta, ok := o.pendingMeta[msgID]
 	if ok {
 		delete(o.pendingMeta, msgID)
+		delete(o.pendingMsgID, msgID)
 	}
 	return meta
+}
+
+// hasPendingMessages reports whether the agent has in-flight messages
+// (published to NATS but no result received yet).
+func (o *Orchestrator) hasPendingMessages(agentID string) bool {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	for _, id := range o.pendingMsgID {
+		if id == agentID {
+			return true
+		}
+	}
+	return false
 }
 
 func (o *Orchestrator) handleIPC(msg *nats.Msg) {
@@ -927,6 +944,11 @@ func (o *Orchestrator) StartIdleReaper(ctx context.Context) {
 		case <-ticker.C:
 			idle := o.sessions.ListIdle(o.cfg.IdleTimeout)
 			for _, agentID := range idle {
+				if q := o.getQueue(agentID); q.Busy() || o.hasPendingMessages(agentID) {
+					slog.Info("skipping idle stop for busy agent", "agent", agentID)
+					o.sessions.Touch(agentID)
+					continue
+				}
 				slog.Info("stopping idle agent", "agent", agentID, "timeout", o.cfg.IdleTimeout)
 				if err := o.StopAgent(ctx, agentID); err != nil {
 					slog.Error("failed to stop idle agent", "agent", agentID, "error", err)
