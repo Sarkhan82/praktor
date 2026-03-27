@@ -889,7 +889,20 @@ func (b *Bot) cmdAgents(ctx context.Context, chatID int64) {
 	for _, a := range agents {
 		status := "stopped"
 		if runningSet[a.ID] {
-			status = "running"
+			if as := b.orch.PingAgent(a.ID); as != nil {
+				jobs := as.ActiveJobs()
+				if jobs > 0 {
+					s := "s"
+					if jobs == 1 {
+						s = ""
+					}
+					status = fmt.Sprintf("active (%d job%s)", jobs, s)
+				} else {
+					status = "idle"
+				}
+			} else {
+				status = "running"
+			}
 		}
 
 		model := b.registry.ResolveModel(a.ID)

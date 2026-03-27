@@ -920,28 +920,53 @@ func (o *Orchestrator) StopAgent(ctx context.Context, agentID string) error {
 
 // isAgentBusy pings the agent container to check if it's actively processing.
 // Returns false (not busy) if the agent doesn't respond or reports idle.
-func (o *Orchestrator) isAgentBusy(agentID string) bool {
+// AgentStatus holds the runtime status of an agent container.
+type AgentStatus struct {
+	Processing      bool `json:"processing"`
+	PendingMessages int  `json:"pending_messages"`
+	ActiveTasks     int  `json:"active_tasks"`
+	BackgroundTasks int  `json:"background_tasks"`
+}
+
+// ActiveJobs returns the total number of active jobs.
+// Background tasks are only counted separately when the query has already finished
+// (processing=false), since they're part of the current query while it's running.
+func (s AgentStatus) ActiveJobs() int {
+	n := s.PendingMessages + s.ActiveTasks
+	if s.Processing {
+		n++
+	} else if s.BackgroundTasks > 0 {
+		n += s.BackgroundTasks
+	}
+	return n
+}
+
+// PingAgent sends a ping to a running agent and returns its status.
+// Returns nil if the agent is not running or doesn't respond.
+func (o *Orchestrator) PingAgent(agentID string) *AgentStatus {
 	if o.containers.GetRunning(agentID) == nil {
-		return false
+		return nil
 	}
 	topic := natsbus.TopicAgentControl(agentID)
 	data, _ := json.Marshal(map[string]string{"command": "ping"})
 	resp, err := o.client.Request(topic, data, 3*time.Second)
 	if err != nil {
-		return false
+		return nil
 	}
-	var status struct {
-		Processing      bool `json:"processing"`
-		PendingMessages int  `json:"pending_messages"`
-		ActiveTasks     int  `json:"active_tasks"`
-		BackgroundTasks int  `json:"background_tasks"`
-	}
+	var status AgentStatus
 	if err := json.Unmarshal(resp.Data, &status); err != nil {
+		return nil
+	}
+	return &status
+}
+
+func (o *Orchestrator) isAgentBusy(agentID string) bool {
+	status := o.PingAgent(agentID)
+	if status == nil {
 		return false
 	}
-	busy := status.Processing || status.PendingMessages > 0 || status.ActiveTasks > 0 || status.BackgroundTasks > 0
+	busy := status.ActiveJobs() > 0
 	if !busy {
-		// Agent reports idle — clear any orphaned pending messages on our side
 		o.clearPendingMessages(agentID)
 	}
 	return busy
