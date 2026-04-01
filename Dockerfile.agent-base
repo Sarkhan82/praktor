@@ -55,7 +55,7 @@ RUN useradd \
 COPY --from=go-build /ptask /usr/local/bin/ptask
 COPY --from=go-build /getcc /usr/local/bin/getcc
 RUN NPM_GLOBAL=$(npm root -g) && \
-    npm install --loglevel=error -g agentmail-cli@0.7.5 @huggingface/transformers@3 && \
+    npm install --loglevel=error -g agentmail-cli@0.7.7 @huggingface/transformers@3 && \
     rm -rf -- /root/.npm /tmp/node-compile-cache && \
     cd "$NPM_GLOBAL/@huggingface/transformers/node_modules" && \
     rm -rf onnxruntime-node && mkdir -p onnxruntime-node && \
@@ -73,14 +73,14 @@ RUN NPM_GLOBAL=$(npm root -g) && \
 RUN ARCH=$(dpkg --print-architecture) && \
     if [ "$ARCH" = "amd64" ]; then \
       AB_ARCH="linux-x64"; \
-      AB_SHA256="ed44a0eb6c40f920e7dddf6a67a00fdf7ecf38bf665ea46a5a1067fca922ff01"; \
+      AB_SHA256="c00c2646c0e483e55c3f5c893c50a2065211193a6f9edd7180bbc5b50b15526d"; \
     elif [ "$ARCH" = "arm64" ]; then \
       AB_ARCH="linux-arm64"; \
-      AB_SHA256="b5898868587720dbb7e16e17992d7ba056f2f3090e8d9215a0c12c8e431a644d"; \
+      AB_SHA256="04786a9bad527a2bfba432307b502a93aabc4043e7072b2a1b20acf3c86b74de"; \
     else \
       echo "Unsupported architecture: $ARCH" && exit 1; \
     fi && \
-    curl -fsSL "https://github.com/vercel-labs/agent-browser/releases/download/v0.23.3/agent-browser-${AB_ARCH}" \
+    curl -fsSL "https://github.com/vercel-labs/agent-browser/releases/download/v0.23.4/agent-browser-${AB_ARCH}" \
       -o /usr/local/bin/agent-browser && \
     echo "${AB_SHA256}  /usr/local/bin/agent-browser" | sha256sum -c - && \
     chmod 555 /usr/local/bin/agent-browser
