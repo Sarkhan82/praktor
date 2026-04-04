@@ -387,9 +387,10 @@ func (o *Orchestrator) handleAgentOutput(msg *nats.Msg) {
 	}
 
 	var output struct {
-		Type    string `json:"type"`
-		Content string `json:"content"`
-		MsgID   string `json:"msg_id"`
+		Type           string `json:"type"`
+		Content        string `json:"content"`
+		MsgID          string `json:"msg_id"`
+		TerminalReason string `json:"terminal_reason,omitempty"`
 	}
 	if err := json.Unmarshal(msg.Data, &output); err != nil {
 		return
@@ -399,14 +400,25 @@ func (o *Orchestrator) handleAgentOutput(msg *nats.Msg) {
 
 	if output.Type == "result" {
 		content := o.redactSecrets(agentID, output.Content)
+		abnormal := output.TerminalReason != "" && output.TerminalReason != "completed"
 
-		agentMsg := &store.Message{
-			AgentID: agentID,
-			Sender:  "agent",
-			Content: content,
+		if abnormal {
+			slog.Warn("agent query terminated abnormally", "agent", agentID, "terminal_reason", output.TerminalReason)
 		}
-		_ = o.store.SaveMessage(agentMsg)
-		o.publishMessageEvent(agentMsg)
+
+		// Save to DB if there's content or an abnormal termination
+		if content != "" || abnormal {
+			agentMsg := &store.Message{
+				AgentID: agentID,
+				Sender:  "agent",
+				Content: content,
+			}
+			if abnormal {
+				agentMsg.Metadata, _ = json.Marshal(map[string]string{"terminal_reason": output.TerminalReason})
+			}
+			_ = o.store.SaveMessage(agentMsg)
+			o.publishMessageEvent(agentMsg, output.TerminalReason)
+		}
 
 		// Get metadata: try msg_id first (parallel-safe), fall back to per-agent lastMeta
 		meta := o.popPendingMeta(output.MsgID)
@@ -414,11 +426,20 @@ func (o *Orchestrator) handleAgentOutput(msg *nats.Msg) {
 			meta = o.getLastMeta(agentID)
 		}
 
-		o.listenerMu.RLock()
-		for _, l := range o.listeners {
-			l(agentID, content, meta)
+		// Append terminal reason notice for listeners (e.g. Telegram)
+		listenerContent := content
+		if abnormal {
+			reason := strings.ReplaceAll(output.TerminalReason, "_", " ")
+			listenerContent = strings.TrimSpace(listenerContent + "\n\n⚠️ _Agent stopped: " + reason + "_")
 		}
-		o.listenerMu.RUnlock()
+
+		if listenerContent != "" {
+			o.listenerMu.RLock()
+			for _, l := range o.listeners {
+				l(agentID, listenerContent, meta)
+			}
+			o.listenerMu.RUnlock()
+		}
 	}
 }
 
@@ -773,7 +794,7 @@ func (o *Orchestrator) ipcSearchHistory(msg *nats.Msg, agentID string, payload j
 	o.respondIPC(msg, map[string]any{"ok": true, "messages": out})
 }
 
-func (o *Orchestrator) publishMessageEvent(msg *store.Message) {
+func (o *Orchestrator) publishMessageEvent(msg *store.Message, terminalReason ...string) {
 	if o.client == nil {
 		return
 	}
@@ -789,25 +810,30 @@ func (o *Orchestrator) publishMessageEvent(msg *store.Message) {
 		timeStr = now.Format("15:04")
 	}
 
+	data := map[string]any{
+		"id":   msg.ID,
+		"role": role,
+		"text": msg.Content,
+		"time": timeStr,
+	}
+	if len(terminalReason) > 0 && terminalReason[0] != "" {
+		data["terminal_reason"] = terminalReason[0]
+	}
+
 	event := map[string]any{
 		"type":      "message",
 		"agent_id":  msg.AgentID,
 		"timestamp": now.UTC().Format(time.RFC3339),
-		"data": map[string]any{
-			"id":   msg.ID,
-			"role": role,
-			"text": msg.Content,
-			"time": timeStr,
-		},
+		"data":      data,
 	}
 
-	data, err := json.Marshal(event)
+	eventJSON, err := json.Marshal(event)
 	if err != nil {
 		return
 	}
 
 	topic := natsbus.TopicEventsAgent(msg.AgentID)
-	_ = o.client.Publish(topic, data)
+	_ = o.client.Publish(topic, eventJSON)
 }
 
 func (o *Orchestrator) EnsureAgent(ctx context.Context, agentID string) error {

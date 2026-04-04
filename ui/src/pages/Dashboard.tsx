@@ -7,7 +7,7 @@ interface StatusData {
   active_agents?: number;
   agents_count?: number;
   pending_tasks?: number;
-  recent_messages?: { id: string; agent: string; role: string; text: string; time: string }[];
+  recent_messages?: { id: string; agent: string; role: string; text: string; time: string; terminal_reason?: string }[];
 }
 
 const card: React.CSSProperties = {
@@ -139,7 +139,21 @@ function Dashboard() {
                     <span style={{ color: 'var(--text-muted)', margin: '0 6px' }}>in</span>
                     <span style={{ color: 'var(--text-secondary)' }}>{msg.agent}</span>
                   </span>
-                  <span style={{ color: 'var(--text-muted)', fontSize: 14 }}>{msg.time}</span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {msg.terminal_reason && msg.terminal_reason !== 'completed' && (
+                      <span style={{
+                        padding: '1px 6px',
+                        borderRadius: 4,
+                        fontSize: 12,
+                        fontWeight: 600,
+                        background: 'var(--amber-muted)',
+                        color: 'var(--amber)',
+                      }}>
+                        {msg.terminal_reason.replace(/_/g, ' ')}
+                      </span>
+                    )}
+                    <span style={{ color: 'var(--text-muted)', fontSize: 14 }}>{msg.time}</span>
+                  </span>
                 </div>
                 <div style={{ color: 'var(--text-primary)' }}>{msg.text}</div>
               </div>

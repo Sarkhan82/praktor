@@ -142,15 +142,19 @@ func (s *Server) getAgentMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Transform to frontend Message interface: {id, role, text, time}
+	// Transform to frontend Message interface: {id, role, text, time, terminal_reason?}
 	out := make([]map[string]string, 0, len(messages))
 	for _, m := range messages {
-		out = append(out, map[string]string{
+		msg := map[string]string{
 			"id":   fmt.Sprintf("%d", m.ID),
 			"role": mapSenderToRole(m.Sender),
 			"text": m.Content,
 			"time": formatMessageTime(m.CreatedAt),
-		})
+		}
+		if tr := extractTerminalReason(m.Metadata); tr != "" {
+			msg["terminal_reason"] = tr
+		}
+		out = append(out, msg)
 	}
 	jsonResponse(w, out)
 }
@@ -178,12 +182,16 @@ func (s *Server) searchAgentMessages(w http.ResponseWriter, r *http.Request) {
 
 	out := make([]map[string]string, 0, len(messages))
 	for _, m := range messages {
-		out = append(out, map[string]string{
+		msg := map[string]string{
 			"id":   fmt.Sprintf("%d", m.ID),
 			"role": mapSenderToRole(m.Sender),
 			"text": m.Content,
 			"time": formatMessageTime(m.CreatedAt),
-		})
+		}
+		if tr := extractTerminalReason(m.Metadata); tr != "" {
+			msg["terminal_reason"] = tr
+		}
+		out = append(out, msg)
 	}
 	jsonResponse(w, out)
 }
@@ -482,13 +490,17 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 		if agentName == "" {
 			agentName = m.AgentID
 		}
-		recentOut = append(recentOut, map[string]string{
+		msg := map[string]string{
 			"id":    fmt.Sprintf("%d", m.ID),
 			"agent": agentName,
 			"role":  mapSenderToRole(m.Sender),
 			"text":  m.Content,
 			"time":  formatMessageTime(m.CreatedAt),
-		})
+		}
+		if tr := extractTerminalReason(m.Metadata); tr != "" {
+			msg["terminal_reason"] = tr
+		}
+		recentOut = append(recentOut, msg)
 	}
 
 	status := map[string]any{
@@ -614,6 +626,17 @@ func taskToAPI(t store.ScheduledTask, agentNames map[string]string) map[string]a
 		m["next_run"] = formatMessageTime(*t.NextRunAt)
 	}
 	return m
+}
+
+func extractTerminalReason(metadata json.RawMessage) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	var m map[string]string
+	if json.Unmarshal(metadata, &m) != nil {
+		return ""
+	}
+	return m["terminal_reason"]
 }
 
 func mapSenderToRole(sender string) string {

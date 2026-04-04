@@ -30,11 +30,12 @@ export class NatsBridge {
     await this.publish(`agent.${this.agentId}.output`, { type, content, ...(msgId ? { msg_id: msgId } : {}) });
   }
 
-  async publishResult(content: string, msgId?: string): Promise<void> {
+  async publishResult(content: string, msgId?: string, terminalReason?: string): Promise<void> {
     await this.publish(`agent.${this.agentId}.output`, {
       type: "result",
       content,
       ...(msgId ? { msg_id: msgId } : {}),
+      ...(terminalReason ? { terminal_reason: terminalReason } : {}),
     });
   }
 

@@ -11,6 +11,7 @@ interface Message {
   role: string;
   text: string;
   time: string;
+  terminal_reason?: string;
 }
 
 const card: React.CSSProperties = {
@@ -248,6 +249,20 @@ function Conversations() {
                     {msg.time && <span style={{ marginLeft: 8 }}>{msg.time}</span>}
                   </div>
                   <div style={{ color: 'var(--text-primary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{msg.text}</div>
+                  {msg.terminal_reason && msg.terminal_reason !== 'completed' && (
+                    <div style={{
+                      display: 'inline-block',
+                      marginTop: 6,
+                      padding: '2px 8px',
+                      borderRadius: 4,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      background: 'var(--amber-muted)',
+                      color: 'var(--amber)',
+                    }}>
+                      {msg.terminal_reason.replace(/_/g, ' ')}
+                    </div>
+                  )}
                 </div>
               );
             })}

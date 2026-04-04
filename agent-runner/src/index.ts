@@ -334,6 +334,13 @@ function loadSystemPrompt(includeIdentity = true): string {
   return parts.join("\n\n---\n\n");
 }
 
+function inferTerminalReason(errorMsg: string): string | undefined {
+  if (/maximum number of turns/i.test(errorMsg)) return "max_turns";
+  if (/blocking.*limit/i.test(errorMsg)) return "blocking_limit";
+  if (/abort/i.test(errorMsg)) return "aborted_tools";
+  return undefined;
+}
+
 function buildQueryOptions(prompt: string, sessionId?: string) {
   const systemPrompt = loadSystemPrompt();
   const cwd = "/workspace/agent";
@@ -416,6 +423,8 @@ async function executeTask(data: Record<string, unknown>): Promise<void> {
     const result = query(opts);
 
     let fullResponse = "";
+    let terminalReason: string | undefined;
+    let hasStreamedOutput = false;
     const iter = result[Symbol.asyncIterator]();
     if (msgId) activeQueries.set(msgId, iter);
 
@@ -427,9 +436,16 @@ async function executeTask(data: Record<string, unknown>): Promise<void> {
           if (backgroundTasks > 0) backgroundTasks--;
         } else if (event.type === "result" && event.subtype === "success") {
           fullResponse = event.result;
+          terminalReason = (event as Record<string, unknown>).terminal_reason as string | undefined;
+        } else if (event.type === "result" && typeof event.subtype === "string" && event.subtype.startsWith("error")) {
+          // SDK uses subtypes like "error_max_turns", "error_blocking_limit"
+          terminalReason = (event as Record<string, unknown>).terminal_reason as string | undefined
+            || event.subtype.replace(/^error_?/, "") || event.subtype;
+          break;
         } else if (event.type === "assistant") {
           for (const block of event.message.content) {
             if (block.type === "text") {
+              hasStreamedOutput = true;
               await bridge.publishOutput(block.text, "text", msgId);
             } else if (block.type === "tool_use" || block.type === "server_tool_use") {
               console.log(`[task] tool: ${block.name}`);
@@ -438,25 +454,35 @@ async function executeTask(data: Record<string, unknown>): Promise<void> {
         }
       }
     } catch (streamErr) {
-      if (fullResponse) {
-        console.warn(`[task] claude process exited with error after successful result, ignoring:`, streamErr);
+      if (fullResponse || hasStreamedOutput) {
+        console.warn(`[task] claude process exited with error after output, ignoring:`, streamErr);
       } else {
         throw streamErr;
       }
     }
 
-    if (fullResponse && !aborted) {
-      await bridge.publishResult(fullResponse, msgId);
+    if (!aborted) {
+      if (!fullResponse && hasStreamedOutput) {
+        fullResponse = "[response was streamed]";
+      }
+      if (fullResponse || terminalReason) {
+        await bridge.publishResult(fullResponse, msgId, terminalReason);
+      }
     }
-    console.log(`[task] completed`);
+    if (terminalReason && terminalReason !== "completed") {
+      console.log(`[task] completed (terminal_reason: ${terminalReason})`);
+    } else {
+      console.log(`[task] completed`);
+    }
   } catch (err) {
     if (aborted) {
       console.log("[task] aborted");
       return;
     }
     const errorMsg = err instanceof Error ? err.message : String(err);
+    const reason = terminalReason || inferTerminalReason(errorMsg);
     console.error(`[task] error:`, err);
-    await bridge.publishResult(`Error: ${errorMsg}`, msgId);
+    await bridge.publishResult(`Error: ${errorMsg}`, msgId, reason);
   } finally {
     if (msgId) activeQueries.delete(msgId);
     activeTaskCount--;
@@ -519,6 +545,8 @@ async function handleMessage(data: Record<string, unknown>): Promise<void> {
 
     // Process streaming result
     let fullResponse = "";
+    let terminalReason: string | undefined;
+    let hasStreamedOutput = false;
     const iter = result[Symbol.asyncIterator]();
     currentQueryIter = iter;
     try {
@@ -531,9 +559,18 @@ async function handleMessage(data: Record<string, unknown>): Promise<void> {
         } else if (event.type === "result" && event.subtype === "success") {
           fullResponse = event.result;
           lastSessionId = event.session_id;
+          terminalReason = (event as Record<string, unknown>).terminal_reason as string | undefined;
+        } else if (event.type === "result" && typeof event.subtype === "string" && event.subtype.startsWith("error")) {
+          // SDK uses subtypes like "error_max_turns", "error_blocking_limit"
+          terminalReason = (event as Record<string, unknown>).terminal_reason as string | undefined
+            || event.subtype.replace(/^error_?/, "") || event.subtype;
+          const errEvent = event as Record<string, unknown>;
+          if (errEvent.session_id) lastSessionId = errEvent.session_id as string;
+          break;
         } else if (event.type === "assistant") {
           for (const block of event.message.content) {
             if (block.type === "text") {
+              hasStreamedOutput = true;
               await bridge.publishOutput(block.text, "text", msgId);
             } else if (block.type === "tool_use" || block.type === "server_tool_use") {
               console.log(`[agent] tool: ${block.name}`);
@@ -542,27 +579,33 @@ async function handleMessage(data: Record<string, unknown>): Promise<void> {
         }
       }
     } catch (streamErr) {
-      if (fullResponse) {
-        console.warn(`[agent] claude process exited with error after successful result, ignoring:`, streamErr);
+      if (fullResponse || hasStreamedOutput) {
+        console.warn(`[agent] claude process exited with error after output, ignoring:`, streamErr);
       } else {
         throw streamErr;
       }
     }
 
     // Send final result (skip if aborted — orchestrator already notified the user)
-    if (fullResponse && !aborted) {
-      await bridge.publishResult(fullResponse, msgId);
+    if (!aborted) {
+      if (!fullResponse && hasStreamedOutput) {
+        fullResponse = "[response was streamed]";
+      }
+      if (fullResponse || terminalReason) {
+        await bridge.publishResult(fullResponse, msgId, terminalReason);
+      }
     }
 
-    console.log(`[agent] completed processing for agent ${AGENT_ID} (session=${lastSessionId})`);
+    console.log(`[agent] completed processing for agent ${AGENT_ID} (session=${lastSessionId}${terminalReason && terminalReason !== "completed" ? `, terminal_reason=${terminalReason}` : ""})`);
   } catch (err) {
     if (aborted) {
       console.log("[agent] query aborted by user");
       return;
     }
     const errorMsg = err instanceof Error ? err.message : String(err);
+    const reason = terminalReason || inferTerminalReason(errorMsg);
     console.error(`[agent] error processing message:`, err);
-    await bridge.publishResult(`Error: ${errorMsg}`, msgId);
+    await bridge.publishResult(`Error: ${errorMsg}`, msgId, reason);
   } finally {
     currentQueryIter = null;
     isProcessing = false;
