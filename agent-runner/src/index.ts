@@ -32,7 +32,24 @@ let isProcessing = false;
 let lastSessionId: string | undefined;
 let currentQueryIter: AsyncIterator<unknown> | null = null;
 let aborted = false;
-let backgroundTasks = 0; // tracks task_started without matching task_notification
+// Per-query background task counter. Incremented on SDK `task_started`,
+// decremented on `task_notification`. Scoped by query key so counts can
+// never leak across queries — the entry is deleted in the query's finally.
+export const backgroundTasksByQuery = new Map<string, number>();
+let taskKeyCounter = 0;
+export function incBg(key: string): void {
+  backgroundTasksByQuery.set(key, (backgroundTasksByQuery.get(key) ?? 0) + 1);
+}
+export function decBg(key: string): void {
+  const n = backgroundTasksByQuery.get(key) ?? 0;
+  if (n > 1) backgroundTasksByQuery.set(key, n - 1);
+  else backgroundTasksByQuery.delete(key);
+}
+export function totalBgTasks(): number {
+  let total = 0;
+  for (const v of backgroundTasksByQuery.values()) total += v;
+  return total;
+}
 let extensionMcpServers: Record<string, { type: string; command?: string; args?: string[]; url?: string; env?: Record<string, string>; headers?: Record<string, string> }> = {};
 const pendingMessages: Array<Record<string, unknown>> = [];
 
@@ -416,6 +433,7 @@ function buildQueryOptions(prompt: string, sessionId?: string) {
 async function executeTask(data: Record<string, unknown>): Promise<void> {
   const text = data.text as string;
   const msgId = data.msg_id as string | undefined;
+  const bgKey = msgId ?? `__task-${++taskKeyCounter}`;
   console.log(`[task] executing parallel task: ${text.substring(0, 100)}...`);
 
   try {
@@ -431,9 +449,9 @@ async function executeTask(data: Record<string, unknown>): Promise<void> {
     try {
       for await (const event of { [Symbol.asyncIterator]: () => iter }) {
         if (event.type === "system" && (event as Record<string, unknown>).subtype === "task_started") {
-          backgroundTasks++;
+          incBg(bgKey);
         } else if (event.type === "system" && (event as Record<string, unknown>).subtype === "task_notification") {
-          if (backgroundTasks > 0) backgroundTasks--;
+          decBg(bgKey);
         } else if (event.type === "result" && event.subtype === "success") {
           fullResponse = event.result;
           terminalReason = (event as Record<string, unknown>).terminal_reason as string | undefined;
@@ -485,6 +503,7 @@ async function executeTask(data: Record<string, unknown>): Promise<void> {
     await bridge.publishResult(`Error: ${errorMsg}`, msgId, reason);
   } finally {
     if (msgId) activeQueries.delete(msgId);
+    backgroundTasksByQuery.delete(bgKey);
     activeTaskCount--;
     // Dequeue next pending task
     if (pendingTasks.length > 0) {
@@ -524,7 +543,8 @@ async function handleMessage(data: Record<string, unknown>): Promise<void> {
 
   isProcessing = true;
   aborted = false;
-  backgroundTasks = 0;
+  const bgKey = "__regular";
+  backgroundTasksByQuery.delete(bgKey);
   console.log(`[agent] processing message for agent ${AGENT_ID}: ${text.substring(0, 100)}...`);
 
   try {
@@ -553,9 +573,9 @@ async function handleMessage(data: Record<string, unknown>): Promise<void> {
       for await (const event of { [Symbol.asyncIterator]: () => iter }) {
         console.log(`[agent] event: type=${event.type}${"subtype" in event ? ` subtype=${event.subtype}` : ""}`);
         if (event.type === "system" && (event as Record<string, unknown>).subtype === "task_started") {
-          backgroundTasks++;
+          incBg(bgKey);
         } else if (event.type === "system" && (event as Record<string, unknown>).subtype === "task_notification") {
-          if (backgroundTasks > 0) backgroundTasks--;
+          decBg(bgKey);
         } else if (event.type === "result" && event.subtype === "success") {
           fullResponse = event.result;
           lastSessionId = event.session_id;
@@ -609,6 +629,7 @@ async function handleMessage(data: Record<string, unknown>): Promise<void> {
   } finally {
     currentQueryIter = null;
     isProcessing = false;
+    backgroundTasksByQuery.delete(bgKey);
 
     // Process next queued message if any
     if (pendingMessages.length > 0) {
@@ -696,7 +717,7 @@ async function handleControl(
         processing: isProcessing,
         pending_messages: pendingMessages.length,
         active_tasks: activeTaskCount,
-        background_tasks: backgroundTasks,
+        background_tasks: totalBgTasks(),
       })));
       break;
     case "abort":
@@ -713,6 +734,7 @@ async function handleControl(
       }
       activeQueries.clear();
       activeTaskCount = 0;
+      backgroundTasksByQuery.clear();
       // Kill any running claude processes as backstop
       try { execSync("pkill -f /usr/local/bin/claude", { timeout: 3000 }); } catch { /* ignore */ }
       // Drain all queues
