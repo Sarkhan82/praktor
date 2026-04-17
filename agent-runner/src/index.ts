@@ -114,7 +114,9 @@ function ensureAgentMd(): void {
 }
 
 function setupAgentBrowser(): void {
-  const skillSource = "/usr/local/share/agent-browser/skills/agent-browser";
+  // In agent-browser v0.26.0 the usage-guide skill was renamed from
+  // `agent-browser` to `core` and moved to skill-data/core/.
+  const skillSource = "/usr/local/share/agent-browser/skills/core";
   const configSource = "/usr/local/share/agent-browser/config.json";
   if (!existsSync(skillSource)) return; // agent-browser not installed
 
@@ -122,17 +124,22 @@ function setupAgentBrowser(): void {
     const skillsDir = "/home/praktor/.claude/skills";
     mkdirSync(skillsDir, { recursive: true });
 
-    // Remove stale playwright-cli symlink from previous image versions
-    const staleLink = join(skillsDir, "playwright-cli");
-    try {
-      if (lstatSync(staleLink).isSymbolicLink() && readlinkSync(staleLink) === "/opt/playwright-cli/skill") {
-        unlinkSync(staleLink);
-        console.log("[agent] removed stale playwright-cli skill symlink");
-      }
-    } catch { /* doesn't exist */ }
+    // Remove stale symlinks from previous image versions
+    for (const [name, target] of [
+      ["playwright-cli", "/opt/playwright-cli/skill"],
+      ["agent-browser", "/usr/local/share/agent-browser/skills/agent-browser"],
+    ] as const) {
+      const staleLink = join(skillsDir, name);
+      try {
+        if (lstatSync(staleLink).isSymbolicLink() && readlinkSync(staleLink) === target) {
+          unlinkSync(staleLink);
+          console.log(`[agent] removed stale ${name} skill symlink`);
+        }
+      } catch { /* doesn't exist */ }
+    }
 
     // Force-update skill symlink
-    const skillLink = join(skillsDir, "agent-browser");
+    const skillLink = join(skillsDir, "core");
     try { unlinkSync(skillLink); } catch { /* doesn't exist */ }
     symlinkSync(skillSource, skillLink);
 

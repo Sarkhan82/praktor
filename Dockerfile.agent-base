@@ -70,33 +70,36 @@ RUN NPM_GLOBAL=$(npm root -g) && \
       > onnxruntime-node/index.js
 
 # Install agent-browser binary from GitHub release
+ARG AGENT_BROWSER_VERSION=v0.26.0
 RUN ARCH=$(dpkg --print-architecture) && \
     if [ "$ARCH" = "amd64" ]; then \
       AB_ARCH="linux-x64"; \
-      AB_SHA256="1b3db20025e09b4b208e0395dc0ff9df3a5238bde0c4617951ff3c11a0185d74"; \
+      AB_SHA256="8784dc259abf72ee04e751b45677d956387af50c99aec5dcd7a41a9bc498e3c3"; \
     elif [ "$ARCH" = "arm64" ]; then \
       AB_ARCH="linux-arm64"; \
-      AB_SHA256="71df06610bcb43ecd83ee0e22a186a76c785f2f48c581506f8368bd98e3e839a"; \
+      AB_SHA256="b3901b17298f6ce6511fcae5c576068a3e8a510ecb365c8ccd876b9b82db4447"; \
     else \
       echo "Unsupported architecture: $ARCH" && exit 1; \
     fi && \
-    curl -fsSL "https://github.com/vercel-labs/agent-browser/releases/download/v0.25.3/agent-browser-${AB_ARCH}" \
+    curl -fsSL "https://github.com/vercel-labs/agent-browser/releases/download/${AGENT_BROWSER_VERSION}/agent-browser-${AB_ARCH}" \
       -o /usr/local/bin/agent-browser && \
     echo "${AB_SHA256}  /usr/local/bin/agent-browser" | sha256sum -c - && \
     chmod 555 /usr/local/bin/agent-browser
 
-# Download agent-browser skill and config
-RUN mkdir -p /usr/local/share/agent-browser/skills/agent-browser/references \
-             /usr/local/share/agent-browser/skills/agent-browser/templates && \
-    cd /usr/local/share/agent-browser/skills/agent-browser && \
-    curl -fsSL -O https://raw.githubusercontent.com/vercel-labs/agent-browser/main/skills/agent-browser/SKILL.md && \
+# Download agent-browser skill and config. In v0.26.0 the usage guide moved
+# from skills/agent-browser/ to skill-data/core/ and was renamed to `core`.
+RUN mkdir -p /usr/local/share/agent-browser/skills/core/references \
+             /usr/local/share/agent-browser/skills/core/templates && \
+    cd /usr/local/share/agent-browser/skills/core && \
+    BASE="https://raw.githubusercontent.com/vercel-labs/agent-browser/${AGENT_BROWSER_VERSION}/skill-data/core" && \
+    curl -fsSL -O "${BASE}/SKILL.md" && \
     cd references && \
     for f in authentication commands profiling proxy-support session-management snapshot-refs video-recording; do \
-      curl -fsSL -O "https://raw.githubusercontent.com/vercel-labs/agent-browser/main/skills/agent-browser/references/${f}.md"; \
+      curl -fsSL -O "${BASE}/references/${f}.md"; \
     done && \
     cd ../templates && \
     for f in authenticated-session capture-workflow form-automation; do \
-      curl -fsSL -O "https://raw.githubusercontent.com/vercel-labs/agent-browser/main/skills/agent-browser/templates/${f}.sh"; \
+      curl -fsSL -O "${BASE}/templates/${f}.sh"; \
     done && \
     echo '{"contentBoundaries":true,"downloadPath":"/workspace/agent/Downloads","executablePath":"/usr/bin/chromium","args":"--disable-gpu,--disable-dev-shm-usage"}' \
       > /usr/local/share/agent-browser/config.json

@@ -292,21 +292,22 @@ Each MCP tool domain lives in its own file under `agent-runner/src/mcp-*.ts`. To
 
 ## Browser Automation (agent-browser)
 
-All agent containers include [agent-browser](https://github.com/vercel-labs/agent-browser) built from source and configured to use the system Chromium on Alpine. Agents interact with browsers via Bash commands (more token-efficient than MCP).
+All agent containers include [agent-browser](https://github.com/vercel-labs/agent-browser) and are configured to use the system Chromium on Debian. Agents interact with browsers via Bash commands (more token-efficient than MCP).
 
-**Build-time setup** (`Dockerfile.agent`):
-- Separate `rust-build` stage clones the repo and compiles the native Rust CLI via `cargo build --release` on Alpine (musl-compatible binary)
-- The compiled binary is copied to `/usr/local/bin/agent-browser` and the skill directory to `/opt/agent-browser/skill/`
-- A `config.json` is generated at `/opt/agent-browser/config.json` pointing to system Chromium at `/usr/bin/chromium-browser`
+**Build-time setup** (`Dockerfile.agent-base`):
+- The prebuilt `agent-browser` binary is downloaded from the GitHub release (pinned by `AGENT_BROWSER_VERSION`) to `/usr/local/bin/agent-browser` and verified against SHA-256
+- The `core` skill (renamed from `agent-browser` in v0.26.0) is fetched from `skill-data/core/` and installed to `/usr/local/share/agent-browser/skills/core/`, together with its `references/` and `templates/`
+- A `config.json` is generated at `/usr/local/share/agent-browser/config.json` pointing to system Chromium at `/usr/bin/chromium`
 
 **Runtime setup** (`agent-runner/src/index.ts` → `setupAgentBrowser()`):
-- Symlinks `/opt/agent-browser/skill` → `/home/praktor/.claude/skills/agent-browser` (skill loaded into system prompt)
-- Symlinks `/opt/agent-browser/config.json` → `/home/praktor/.agent-browser/config.json` (agent-browser resolves config from `~/.agent-browser/`)
+- Symlinks `/usr/local/share/agent-browser/skills/core` → `/home/praktor/.claude/skills/core` (skill loaded into system prompt)
+- Symlinks `/usr/local/share/agent-browser/config.json` → `/home/praktor/.agent-browser/config.json` (agent-browser resolves config from `~/.agent-browser/`)
 - Symlinks (not copies) ensure agents always use the image's version — updates come from rebuilding the image
+- Cleans up stale symlinks from previous image versions (e.g. the old `playwright-cli` and `agent-browser` skill links)
 
 **Browser lifecycle:** The browser session persists across messages within the same agent session. Everything shuts down with the container on idle timeout.
 
-**System prompt:** When `/opt/agent-browser` exists, a prompt section tells agents that agent-browser is pre-installed and to never install browsers via npm, npx, or nix.
+**System prompt:** When `/usr/local/bin/agent-browser` exists, a prompt section tells agents that agent-browser is pre-installed and to never install browsers via npm, npx, or nix.
 
 ## What it supports
 
