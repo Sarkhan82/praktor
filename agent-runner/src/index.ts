@@ -1,4 +1,4 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query, startup, type WarmQuery } from "@anthropic-ai/claude-agent-sdk";
 import { NatsBridge } from "./nats-bridge.js";
 import { applyExtensions } from "./extensions.js";
 import { readFileSync, readdirSync, mkdirSync, writeFileSync, rmSync, symlinkSync, existsSync, lstatSync, readlinkSync, unlinkSync } from "fs";
@@ -52,6 +52,32 @@ export function totalBgTasks(): number {
 }
 let extensionMcpServers: Record<string, { type: string; command?: string; args?: string[]; url?: string; env?: Record<string, string>; headers?: Record<string, string> }> = {};
 const pendingMessages: Array<Record<string, unknown>> = [];
+
+// Pre-warmed subprocess for the next regular message, so the CLI spawn +
+// initialize handshake does not add latency to the first assistant token.
+// Not used for the swarm collaborative path (short-lived) or parallel
+// scheduled tasks (multiple concurrent subprocesses).
+let warmHandle: WarmQuery | null = null;
+let warmForSessionId: string | undefined;
+function rewarm(): void {
+  if (SWARM_CHAT_TOPIC) return;
+  const target = lastSessionId;
+  if (warmHandle && warmForSessionId === target) return;
+  const prev = warmHandle;
+  warmHandle = null;
+  if (prev) { try { prev.close(); } catch { /* ignore */ } }
+  warmForSessionId = target;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  startup({ options: buildRunOptions(target) as any })
+    .then((w) => {
+      // If session changed while we were warming, discard.
+      if (warmForSessionId !== target) { try { w.close(); } catch { /* ignore */ } return; }
+      warmHandle = w;
+    })
+    .catch((err) => {
+      console.warn("[agent] pre-warm failed:", err instanceof Error ? err.message : err);
+    });
+}
 
 // Parallel task execution
 const MAX_PARALLEL_TASKS = parseInt(process.env.MAX_PARALLEL_TASKS || "3", 10);
@@ -365,14 +391,12 @@ function inferTerminalReason(errorMsg: string): string | undefined {
   return undefined;
 }
 
-function buildQueryOptions(prompt: string, sessionId?: string) {
+function buildRunOptions(sessionId?: string) {
   const systemPrompt = loadSystemPrompt();
   const cwd = "/workspace/agent";
   const tools = parseAllowedTools(ALLOWED_TOOLS_ENV);
 
   return {
-    prompt,
-    options: {
       model: CLAUDE_MODEL,
       cwd,
       pathToClaudeCodeExecutable: "/usr/local/bin/claude",
@@ -432,8 +456,11 @@ function buildQueryOptions(prompt: string, sessionId?: string) {
       stderr: (data: string) => {
         console.error(`[claude-stderr] ${data.trimEnd()}`);
       },
-    },
   };
+}
+
+function buildQueryOptions(prompt: string, sessionId?: string) {
+  return { prompt, options: buildRunOptions(sessionId) };
 }
 
 // Execute a scheduled task in parallel (fresh session, no resume)
@@ -565,10 +592,26 @@ async function handleMessage(data: Record<string, unknown>): Promise<void> {
       console.log(`[agent] prepended ${chatHistory.length} chat messages to prompt`);
     }
 
-    console.log(`[agent] starting claude query`);
-
-    const opts = buildQueryOptions(augmentedText, lastSessionId);
-    const result = query(opts);
+    // Use the pre-warmed subprocess if available and fresh for the current
+    // session; otherwise spawn a new one. The warm path skips the CLI
+    // spawn + initialize handshake latency on the first token.
+    let result;
+    if (warmHandle && warmForSessionId === lastSessionId && !SWARM_CHAT_TOPIC) {
+      console.log(`[agent] starting claude query (warm)`);
+      const handle = warmHandle;
+      warmHandle = null;
+      try {
+        result = handle.query(augmentedText);
+      } catch (warmErr) {
+        console.warn("[agent] warm query failed, falling back:", warmErr instanceof Error ? warmErr.message : warmErr);
+        try { handle.close(); } catch { /* ignore */ }
+      }
+    }
+    if (!result) {
+      console.log(`[agent] starting claude query`);
+      const opts = buildQueryOptions(augmentedText, lastSessionId);
+      result = query(opts);
+    }
 
     // Process streaming result
     let fullResponse = "";
@@ -637,6 +680,9 @@ async function handleMessage(data: Record<string, unknown>): Promise<void> {
     currentQueryIter = null;
     isProcessing = false;
     backgroundTasksByQuery.delete(bgKey);
+
+    // Pre-warm the subprocess for the next regular message.
+    rewarm();
 
     // Process next queued message if any
     if (pendingMessages.length > 0) {
@@ -715,6 +761,7 @@ async function handleControl(
   switch (command) {
     case "shutdown":
       console.log("[agent] shutting down...");
+      if (warmHandle) { try { warmHandle.close(); } catch { /* ignore */ } warmHandle = null; }
       await bridge.close();
       process.exit(0);
       break;
@@ -742,6 +789,8 @@ async function handleControl(
       activeQueries.clear();
       activeTaskCount = 0;
       backgroundTasksByQuery.clear();
+      // Discard the pre-warmed subprocess; it will be recreated below.
+      if (warmHandle) { try { warmHandle.close(); } catch { /* ignore */ } warmHandle = null; }
       // Kill any running claude processes as backstop
       try { execSync("pkill -f /usr/local/bin/claude", { timeout: 3000 }); } catch { /* ignore */ }
       // Drain all queues
@@ -756,10 +805,14 @@ async function handleControl(
       isProcessing = false;
       msg.respond(new TextEncoder().encode(JSON.stringify({ status: "ok" })));
       console.log("[agent] run aborted");
+      // Re-warm for the next message.
+      rewarm();
       break;
     case "clear_session":
       console.log("[agent] clearing session...");
       lastSessionId = undefined;
+      // The warm handle was prepared for the old session; discard it.
+      if (warmHandle) { try { warmHandle.close(); } catch { /* ignore */ } warmHandle = null; }
       for (const dir of [
         "/home/praktor/.claude/projects",
         "/home/praktor/.claude/sessions",
@@ -768,6 +821,7 @@ async function handleControl(
       ]) {
         try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
       }
+      rewarm();
       msg.respond(new TextEncoder().encode(JSON.stringify({ status: "ok" })));
       console.log("[agent] session cleared");
       break;
@@ -830,6 +884,10 @@ async function main(): Promise<void> {
 
   await bridge.publishReady();
   console.log(`[agent] ready and listening for messages`);
+
+  // Pre-warm a claude subprocess so the first message skips the spawn +
+  // initialize handshake latency. Fire-and-forget; falls back transparently.
+  rewarm();
 
   // Keep process alive
   process.on("SIGTERM", async () => {
