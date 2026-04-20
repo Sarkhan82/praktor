@@ -163,6 +163,11 @@ func runGateway() error {
 
 	// Web UI
 	if cfg.Web.Enabled {
+		// Launch cloudflared tunnel BEFORE the web server so the bearer token
+		// (generated if missing) is baked into cfg.Web.Auth and the tunnel URL
+		// is discovered concurrently while the server comes up.
+		cfg.Web.Auth = startCloudflaredTunnel(ctx, cfg.Web.Port, cfg.Web.Auth)
+
 		srv := web.NewServer(db, bus, orch, reg, rtr, swarmCoord, cfg.Web, v, version)
 		go func() {
 			if err := srv.Start(ctx); err != nil {

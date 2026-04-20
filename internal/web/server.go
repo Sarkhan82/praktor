@@ -81,6 +81,11 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("POST /api/logout", s.handleLogout)
 	mux.HandleFunc("GET /api/auth/check", s.handleAuthCheck)
 
+	// V1 API routes (mobile app)
+	mux.HandleFunc("GET /api/v1/status", s.handleV1Status)
+	mux.HandleFunc("POST /api/v1/fcm-token", s.handleV1FCMToken)
+	mux.HandleFunc("GET /api/v1/qr-payload", s.handleV1QRPayload)
+
 	// API routes
 	s.registerAPI(mux)
 
@@ -130,8 +135,8 @@ func (s *Server) withMiddleware(next http.Handler) http.Handler {
 
 		// Session/auth for API routes (except public auth endpoints)
 		if strings.HasPrefix(r.URL.Path, "/api/") && s.cfg.Auth != "" {
-			// Public endpoints: login and auth check
-			if r.URL.Path == "/api/login" || r.URL.Path == "/api/auth/check" {
+			// Public endpoints: login, auth check, and qr-payload (used for mobile pairing)
+			if r.URL.Path == "/api/login" || r.URL.Path == "/api/auth/check" || r.URL.Path == "/api/v1/qr-payload" {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -145,9 +150,17 @@ func (s *Server) withMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// checkAuth validates session cookie or Basic Auth. Returns true if authenticated.
+// checkAuth validates session cookie, Bearer token, or Basic Auth. Returns true if authenticated.
 func (s *Server) checkAuth(w http.ResponseWriter, r *http.Request) bool {
-	// Check session cookie first
+	// Check Bearer token first (used by mobile app)
+	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+		token := strings.TrimPrefix(auth, "Bearer ")
+		if token == s.cfg.Auth {
+			return true
+		}
+	}
+
+	// Check session cookie
 	if cookie, err := r.Cookie(sessionCookieName); err == nil {
 		s.sessionMu.Lock()
 		expiry, ok := s.sessions[cookie.Value]
