@@ -163,12 +163,24 @@ func runGateway() error {
 
 	// Web UI
 	if cfg.Web.Enabled {
+		// Resolve a stable data directory for tunnel + API handlers so that
+		// `data/qr_payload.json` and `data/fcm_token.txt` are not written
+		// relative to whatever cwd the gateway was launched from.
+		dataDir, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("resolve working directory: %w", err)
+		}
+
 		// Launch cloudflared tunnel BEFORE the web server so the bearer token
 		// (generated if missing) is baked into cfg.Web.Auth and the tunnel URL
 		// is discovered concurrently while the server comes up.
-		cfg.Web.Auth = startCloudflaredTunnel(ctx, cfg.Web.Port, cfg.Web.Auth)
+		bearer, err := startCloudflaredTunnel(ctx, cfg.Web.Port, cfg.Web.Auth, dataDir)
+		if err != nil {
+			return fmt.Errorf("generate bearer token: %w", err)
+		}
+		cfg.Web.Auth = bearer
 
-		srv := web.NewServer(db, bus, orch, reg, rtr, swarmCoord, cfg.Web, v, version)
+		srv := web.NewServer(db, bus, orch, reg, rtr, swarmCoord, cfg.Web, v, version, dataDir)
 		go func() {
 			if err := srv.Start(ctx); err != nil {
 				slog.Error("web server error", "error", err)

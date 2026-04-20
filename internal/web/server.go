@@ -46,12 +46,16 @@ type Server struct {
 	cfg        config.WebConfig
 	version    string
 	startedAt  time.Time
+	dataDir    string
 
 	sessionMu sync.Mutex
 	sessions  map[string]time.Time // token → expiry
 }
 
-func NewServer(s *store.Store, bus *natsbus.Bus, orch *agent.Orchestrator, reg *registry.Registry, rtr *router.Router, swarmCoord *swarm.Coordinator, cfg config.WebConfig, v *vault.Vault, version string) *Server {
+func NewServer(s *store.Store, bus *natsbus.Bus, orch *agent.Orchestrator, reg *registry.Registry, rtr *router.Router, swarmCoord *swarm.Coordinator, cfg config.WebConfig, v *vault.Vault, version string, dataDir string) *Server {
+	if cfg.Auth == "" {
+		slog.Warn("web auth not configured — server is open")
+	}
 	return &Server{
 		store:      s,
 		bus:        bus,
@@ -64,6 +68,7 @@ func NewServer(s *store.Store, bus *natsbus.Bus, orch *agent.Orchestrator, reg *
 		cfg:        cfg,
 		version:    version,
 		startedAt:  time.Now(),
+		dataDir:    dataDir,
 		sessions:   make(map[string]time.Time),
 	}
 }

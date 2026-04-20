@@ -33,12 +33,13 @@ func (s *Server) handleV1FCMToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := os.MkdirAll("data", 0o755); err != nil {
+	dataDir := filepath.Join(s.dataDir, "data")
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		jsonError(w, "failed to create data dir: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	tokenPath := filepath.Join("data", "fcm_token.txt")
+	tokenPath := filepath.Join(dataDir, "fcm_token.txt")
 	if err := os.WriteFile(tokenPath, []byte(body.Token), 0o600); err != nil {
 		jsonError(w, "failed to persist token: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -51,7 +52,7 @@ func (s *Server) handleV1FCMToken(w http.ResponseWriter, r *http.Request) {
 // bootstrapper. This endpoint is PUBLIC (no auth) — the payload itself contains
 // the bearer token required for further authenticated calls.
 func (s *Server) handleV1QRPayload(w http.ResponseWriter, r *http.Request) {
-	payloadPath := filepath.Join("data", "qr_payload.json")
+	payloadPath := filepath.Join(s.dataDir, "data", "qr_payload.json")
 	data, err := os.ReadFile(payloadPath)
 	if err != nil {
 		if os.IsNotExist(err) {
